@@ -1,18 +1,12 @@
 import re
 from functools import partial
+from multiprocessing import cpu_count
 from multiprocessing.pool import Pool
 
 from mlxtend.frequent_patterns import association_rules
 from mlxtend.preprocessing import TransactionEncoder
 import mlxtend.frequent_patterns as ml
 from pandas import DataFrame
-
-csv_file = "Foodmart_2020_PD.csv"
-
-stores = {
-    'Deluxe Supermarkets': ['8', '12', '13', '17', '19', '21'],
-    'Gourmet Supermarkets': ['4', '6']
-}
 
 
 def store_groups(csv_file, stores, count=False):
@@ -36,9 +30,6 @@ def store_groups(csv_file, stores, count=False):
         store_db[store] = Pattern(lines=store_trx[store], count=count)
 
     return store_db
-
-
-# Pattern Support Functions
 
 
 def rm_exists(some_list, value):
@@ -106,135 +97,149 @@ def make_transaction(entry, count, **kwargs):
     return transaction
 
 
-def fit_data(count, **kwargs):
-    transactions = []
-    tranx = partial(make_transaction, count=count)
-    lines = None
+def worker(line, tranx, **kwargs):
+    line = line.rstrip('\n')
+    line = line.split(',')
+    line = rm_exists(line, value='')
 
-    csv_file = kwargs.get('csv_path')
+    transaction = []
+    for i, entry in enumerate(line):
 
-    if csv_file:
-        with open(csv_file, 'r') as file:
-            lines = file.readlines()
-    else:
-        lines = kwargs.get('lines')
+        if len(entry) > 11:
+            indices = [n + 1 for n in range(len(entry)) if is_next_int(n, entry)]
 
-    if lines:
-        for line in lines:
-            line = line.rstrip('\n')
-            line = line.split(',')
-            line = rm_exists(line, value='')
+            if len(indices) > 1:
+                indices.insert(0, 0)
+                entries = [entry[indices[x - 1]:indices[x]] for x in range(1, len(indices))]
 
-            transaction = []
-            for i, entry in enumerate(line):
-
-                if len(entry) > 11:
-                    indices = [n + 1 for n in range(len(entry)) if is_next_int(n, entry)]
-
-                    if len(indices) > 1:
-                        indices.insert(0, 0)
-                        entries = [entry[indices[x - 1]:indices[x]] for x in range(1, len(indices))]
-
-                        for val in entries:
-                            transaction += tranx(entry=val, **kwargs)
-                    else:
-                        transaction += tranx(entry=entry, **kwargs)
-
-                else:
-                    transaction += tranx(entry=entry, **kwargs)
-
-            if 'error' not in transaction:
-                transactions.append(transaction)
-
-        return transactions
-
-    else:
-        raise ValueError('Data not provided')
-
-
-def build_dataset(count, **kwargs):
-
-    transactions = fit_data(count, **kwargs)
-    tr_enc = TransactionEncoder()
-    trans_array = tr_enc.fit(transactions).transform(transactions)
-
-    return DataFrame(trans_array, columns=tr_enc.columns_)
-
-
-class Pattern:
-
-    def __init__(self, count=False, **kwargs):
-
-        self.dataset = build_dataset(count, **kwargs)
-        self.items_set = self.create_item_set(order=False, min_support=0)
-        self.rules = None
-
-    def create_item_set(self, algorithm='fpgrowth', min_support=0.5, length=[None, None], order=True, ascending=True,
-                        inplace=False):
-
-        equal_len = None
-        min_len = None
-        max_len = None
-
-        if length[0] == length[1] and length[0] and length[1]:
-            equal_len = length[0]
+                for val in entries:
+                    transaction += tranx(entry=val, **kwargs)
+            else:
+                transaction += tranx(entry=entry, **kwargs)
 
         else:
-            if length[0]:
-                min_len = length[0]
-            if length[1]:
-                max_len = length[1]
+            transaction += tranx(entry=entry, **kwargs)
 
-        try:
-            temp = getattr(ml, algorithm)(df=self.dataset, min_support=min_support, use_colnames=True, max_len=max_len)
-        except AttributeError:
-            raise ValueError('Algorithm does not exist')
+    if 'error' not in transaction:
+        return transaction
 
-        if equal_len or min_len or order is True:
-            temp['length'] = temp['itemsets'].apply(lambda x: len(x))
 
-            if equal_len:
-                temp = temp[temp['length'] == equal_len]
-            elif min_len:
-                temp = temp[temp['length'] >= min_len]
+if __name__ == '__main__':
 
-            if order is True:
-                temp.sort_values('length', inplace=True, ascending=ascending)
-                temp.reset_index(drop=True, inplace=True)
+    def fit_data(count, **kwargs):
+        tranx = partial(make_transaction, count=count)
+        lines = None
 
-            temp.drop('length', axis=1, inplace=True)
+        csv_file = kwargs.get('csv_path')
 
-        if inplace is True:
-            self.items_set = temp
+        if csv_file:
+            with open(csv_file, 'r') as file:
+                lines = file.readlines()
+        else:
+            lines = kwargs.get('lines')
 
-        return temp
-
-    def create_association_rules(self, items_set=None, metrics={'confidence': 0.4, 'lift': 1.1}):
-
-        if items_set is None:
-            if self.items_set is not None:
-                items_set = self.items_set
+        if lines:
+            workers = kwargs.get('workers')
+            if workers:
+                pool = Pool(workers)
             else:
-                raise ValueError('Frequent itemsets not created')
+                pool = Pool(cpu_count())
 
-        keys = list(metrics.keys())
+            transactions = pool.map(partial(worker, tranx=tranx, **kwargs), lines)
+            return transactions
 
-        temp = association_rules(items_set, metric=keys[0], min_threshold=metrics[keys[0]])
-
-        if len(keys) > 1:
-            for i in range(1, len(keys)):
-                temp = temp[temp[keys[i]] >= metrics[keys[i]]]
-
-        self.rules = temp
-        return temp
+        else:
+            raise ValueError('Data not provided')
 
 
+    def build_dataset(count, **kwargs):
+
+        transactions = fit_data(count, **kwargs)
+        tr_enc = TransactionEncoder()
+        trans_array = tr_enc.fit(transactions).transform(transactions)
+
+        return DataFrame(trans_array, columns=tr_enc.columns_)
 
 
-test = Pattern(csv_path=csv_file)
-print(test.dataset)
-#test.create_item_set(min_support=0.001, order=True, length=[None, 3])
-#print(test.items_set)
-#print(len(test.items_set))
-#test.create_association_rules()
-#print(test.rules)
+    class Pattern:
+
+        def __init__(self, count=False, **kwargs):
+
+            self.dataset = build_dataset(count, **kwargs)
+            self.items_set = self.create_item_set(order=False, min_support=0)
+            self.rules = None
+
+        def create_item_set(self, algorithm='fpgrowth', min_support=0.5, length=[None, None], order=True, ascending=True,
+                            inplace=False):
+
+            equal_len = None
+            min_len = None
+            max_len = None
+
+            if length[0] == length[1] and length[0] and length[1]:
+                equal_len = length[0]
+
+            else:
+                if length[0]:
+                    min_len = length[0]
+                if length[1]:
+                    max_len = length[1]
+
+            try:
+                temp = getattr(ml, algorithm)(df=self.dataset, min_support=min_support, use_colnames=True, max_len=max_len)
+            except AttributeError:
+                raise ValueError('Algorithm does not exist')
+
+            if equal_len or min_len or order is True:
+                temp['length'] = temp['itemsets'].apply(lambda x: len(x))
+
+                if equal_len:
+                    temp = temp[temp['length'] == equal_len]
+                elif min_len:
+                    temp = temp[temp['length'] >= min_len]
+
+                if order is True:
+                    temp.sort_values('length', inplace=True, ascending=ascending)
+                    temp.reset_index(drop=True, inplace=True)
+
+                temp.drop('length', axis=1, inplace=True)
+
+            if inplace is True:
+                self.items_set = temp
+
+            return temp
+
+        def create_association_rules(self, items_set=None, metrics={'confidence': 0.4, 'lift': 1.1}):
+
+            if items_set is None:
+                if self.items_set is not None:
+                    items_set = self.items_set
+                else:
+                    raise ValueError('Frequent itemsets not created')
+
+            keys = list(metrics.keys())
+
+            temp = association_rules(items_set, metric=keys[0], min_threshold=metrics[keys[0]])
+
+            if len(keys) > 1:
+                for i in range(1, len(keys)):
+                    temp = temp[temp[keys[i]] >= metrics[keys[i]]]
+
+            self.rules = temp
+            return temp
+
+
+    csv = "Foodmart_2020_PD.csv"
+
+    stores = {
+        'Deluxe Supermarkets': ['8', '12', '13', '17', '19', '21'],
+        'Gourmet Supermarkets': ['4', '6']
+    }
+
+    test = Pattern(csv_path=csv, workers=5)
+    print(test.dataset)
+    #test.create_item_set(min_support=0.001, order=True, length=[None, 3])
+    #print(test.items_set)
+    #print(len(test.items_set))
+    #test.create_association_rules()
+    #print(test.rules)
