@@ -4,3 +4,5 @@
 *.csv
 
 pp_mining/__pycache__/
+
+.ipynb_checkpoints/
