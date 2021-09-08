@@ -1,11 +1,7 @@
-# Cadeira: Prospeção de Dados
+# Data Mining FCUL 19/20 
 
-### 1º Projeto - Pattern Mining
+This work was developed as part of FCUL's 2019/2020 edition of the [Data Mining course](https://fenix.ciencias.ulisboa.pt/courses/pdad-4-2254879305237547)
 
-#### Aluno: Pedro Giesteira Cotovio - Número: 55053
+### Pattern Mining
 
-Resumo:
-
-O projeto é uma análise 'market basket' do dataset foodmart2020, disponivel dentro da 
-dirétoria `dataset`. A analise principal está no jupyter notebbok `PD_201920_Project`.
-Para facilitar a análise foi criado um python module `pp_mining`, que está bem documentado.
+#### Student: Pedro Giesteira Cotovio
